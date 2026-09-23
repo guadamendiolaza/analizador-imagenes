@@ -738,8 +738,9 @@ class ManuscriptApp {
 
     for (let idx = 0; idx < this.items.length; idx++) {
       const item = this.items[idx];
-      const baseName = item.name.replace(/\.[^/.]+$/, "");
-      const outputName = `${baseName}_mejorada.jpg`;
+      // Nombre correlativo DOC_0001, DOC_0002... preservando el orden original de la carpeta
+      const docNum = String(idx + 1).padStart(4, '0');
+      const outputName = `DOC_${docNum}.jpg`;
 
       if (item.enhancedBlob) {
         folder.file(outputName, item.enhancedBlob);
@@ -756,8 +757,8 @@ class ManuscriptApp {
         autoCount++;
       }
 
-      reportLines.push(`${idx + 1}. ${outputName}`);
-      reportLines.push(`   - Original: ${item.name} (${Math.round(item.size / 1024)} KB)`);
+      reportLines.push(`${idx + 1}. ${outputName}  (original: ${item.name})`);
+      reportLines.push(`   - Tamaño original: ${Math.round(item.size / 1024)} KB`);
       reportLines.push(`   - Estado: ${recordType}`);
       reportLines.push(`   - Giro aplicado: ${item.rotationDeg}°`);
       reportLines.push(`   - Detalle: ${item.reviewReason || 'Procesado'}\n`);

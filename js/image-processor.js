@@ -217,40 +217,83 @@ class ImageProcessor {
 
     if (isLandscape) {
       // Para imágenes apaisadas: medir span vertical en franja izquierda vs derecha.
-      // Regla: el lado ANGOSTO va abajo. Después de rotar, el lado angosto queda en bottom.
-      // Rotar 90° CW pone el lado DERECHO de la landscape como bottom.
-      // Rotar 270° CW pone el lado IZQUIERDO como bottom.
       const leftH  = colSpan(0, Math.round(AW * 0.25));
       const rightH = colSpan(Math.round(AW * 0.75), AW);
 
-      if (leftH < rightH * 0.90) {
-        // Lado izquierdo es más angosto → izquierda debe ser el bottom → rotar 270° CW
-        return 270;
-      } else if (rightH < leftH * 0.90) {
-        // Lado derecho es más angosto → derecha debe ser el bottom → rotar 90° CW
-        return 90;
-      }
+      if (leftH < rightH * 0.90) return 270;
+      if (rightH < leftH * 0.90) return 90;
       return 270; // default landscape
     }
 
-    // ─── Imagen vertical (portrait) ───────────────────────────────────────────
-    // REGLA FÍSICA CONFIRMADA con las fotos reales:
-    //   • El lado ANCHO de la hoja → arriba (encuadernación, bordes solapados)
-    //   • El lado ANGOSTO → abajo  (borde libre de la hoja)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DETECCIÓN PORTRAIT: SISTEMA DE 3 SEÑALES COMBINADAS
     //
-    // Estado CORRECTO:   topW > botW  (ancho arriba, angosto abajo) → NO rotar
-    // Estado INVERTIDO:  botW > topW  (ancho abajo, angosto arriba) → rotar 180°
+    // REGLA FÍSICA (confirmada con imágenes reales):
+    //   • Lado ANCHO  → arriba  (encuadernación / bordes solapados del libro)
+    //   • Lado ANGOSTO → abajo  (borde libre de la hoja)
+    //
+    // CORRECTO:  topW > botW  → score negativo (no rotar)
+    // INVERTIDO: botW > topW  → score positivo (rotar 180°)
+    // ═══════════════════════════════════════════════════════════════════════════
 
+    // ─── Señal 1: Trapezoide — diferencia de ancho superior vs inferior ───────
     const topW = rowSpan(0, Math.round(AH * 0.25));
     const botW = rowSpan(Math.round(AH * 0.75), AH);
 
-    // Si la parte INFERIOR es notablemente MÁS ANCHA que la superior:
-    // la hoja está patas para arriba → girar 180°
-    if (botW > topW * 1.10) {
-      return 180;
+    // Contribución proporcional: cada 1% de diferencia aporta 0.2 pts
+    // botW > topW = inferior más ancho = invertido = score positivo
+    const trapRatio  = (botW + 1) / (topW + 1);
+    const trapContrib = (trapRatio - 1.0) * 20;
+
+    // ─── Señal 2: Oscuridad del borde extremo (sombra de encuadernación) ──────
+    // La encuadernación crea sombra en el lado donde están cosidas las páginas.
+    // En orientación CORRECTA eso está ARRIBA → borde superior ligeramente más oscuro.
+    const meanBrStrip = (y0, y1) => {
+      let sum = 0, n = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = Math.round(AW * 0.1); x < Math.round(AW * 0.9); x++) {
+          sum += brightness[y * AW + x]; n++;
+        }
+      }
+      return n > 0 ? sum / n : 128;
+    };
+
+    const topEdgeBr = meanBrStrip(0, Math.round(AH * 0.06));
+    const botEdgeBr = meanBrStrip(Math.round(AH * 0.94), AH);
+
+    // shadowRatio > 1 → borde inferior más oscuro → encuadernación abajo → INVERTIDO
+    const shadowRatio  = (botEdgeBr + 1) / (topEdgeBr + 1);
+    const shadowContrib = (shadowRatio - 1.0) * 10;
+
+    // ─── Señal 3: Centro de masa vertical de la tinta ─────────────────────────
+    // En orientación CORRECTA el texto inicia arriba → centro de masa hacia mitad superior.
+    // En orientación INVERTIDA el texto "inicia" visualmente abajo → centro de masa inferior.
+    let inkWY = 0, inkTotal = 0;
+    for (let y = 0; y < AH; y++) {
+      for (let x = 0; x < AW; x++) {
+        const br  = brightness[y * AW + x];
+        const ink = br < THRESH ? (THRESH - br) : 0;
+        inkWY    += y * ink;
+        inkTotal += ink;
+      }
+    }
+    const inkCenterY  = inkTotal > 0 ? (inkWY / inkTotal) / AH : 0.5;
+    // inkCenterY > 0.5 → más tinta en mitad inferior → posible invertido
+    const inkContrib  = (inkCenterY - 0.5) * 10;
+
+    // ─── Decisión combinada ────────────────────────────────────────────────────
+    // Pesos: trapezoide 40%, sombra de borde 35%, centro de masa 25%
+    const totalScore = trapContrib * 0.40 + shadowContrib * 0.35 + inkContrib * 0.25;
+
+    // Diagnóstico activable con: window.DEBUG_ORIENTATION = true
+    if (typeof window !== 'undefined' && window.DEBUG_ORIENTATION) {
+      console.log(`[Orient] trap=${trapContrib.toFixed(2)} shadow=${shadowContrib.toFixed(2)} ink=${inkContrib.toFixed(2)} → total=${totalScore.toFixed(2)}`);
     }
 
-    return 0; // orientación correcta
+    // score > 0.8 = evidencia suficiente de imagen invertida → rotar 180°
+    if (totalScore > 0.8) return 180;
+
+    return 0; // orientación correcta o señal ambigua
   }
 
   // ========= MEJORA OPENCVO: CLAHE + NIVELACIÓN SIN FUGA DE MEMORIA =========
