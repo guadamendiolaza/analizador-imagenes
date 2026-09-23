@@ -1,11 +1,11 @@
 /**
  * ==========================================================================
- * MOTOR DE PROCESAMIENTO DE IMÁGENES: HISTORICAL DOCUMENT ENHANCER v3.8
- * - Detección de lectura y renglones de manuscritos (perfil de proyección y gradientes).
- * - Rotación inteligente en el sentido de lectura (ancho de hoja en base / 270° vs 90° vs 0°).
- * - Recorte no agresivo: Conserva 100% de la foto si la hoja ya llena el encuadre (>75%).
- * - Recorte seguro (+3.5% margen) sólo cuando hay fondo de escritorio visible y separable.
- * - Nivelación aditiva de iluminación (cero rayas, conserva tonos sepia y sellos).
+ * MOTOR DE PROCESAMIENTO DE IMÁGENES: HISTORICAL DOCUMENT ENHANCER v4.0
+ * - Detección de orientación de lectura humana (0°, 90°, 180°, 270°).
+ * - Análisis de renglones de manuscritos por perfil de proyección y densidad.
+ * - SIN RECORTE: Conserva el 100% de la imagen original intacta.
+ * - Nivelación aditiva de iluminación (sin rayas, conserva tonos sepia y sellos).
+ * - Gestión estricta de memoria (liberación instantánea de Mats y Canvases).
  * ==========================================================================
  */
 
@@ -80,7 +80,7 @@ class ImageProcessor {
     });
   }
 
-  async loadImageFromFile(file, rotationDeg = 0, maxDim = 3200) {
+  async loadImageFromFile(file, rotationDeg = 0, maxDim = 2400) {
     const exifOrientation = await this.getExifOrientation(file);
 
     return new Promise((resolve, reject) => {
@@ -105,7 +105,7 @@ class ImageProcessor {
     });
   }
 
-  normalizeImageOrientation(img, exifOrientation, additionalRotation = 0, maxDim = 3200) {
+  normalizeImageOrientation(img, exifOrientation, additionalRotation = 0, maxDim = 2400) {
     let exifRot = 0;
     if (exifOrientation === 6) exifRot = 90;
     else if (exifOrientation === 3) exifRot = 180;
@@ -118,10 +118,9 @@ class ImageProcessor {
     const naturalW = isFlipped ? img.height : img.width;
     const naturalH = isFlipped ? img.width : img.height;
 
-    // Escalar si supera la resolución máxima para no saturar memoria RAM
     const scale = Math.min(1.0, maxDim / Math.max(naturalW, naturalH));
-    const targetW = Math.round(naturalW * scale);
-    const targetH = Math.round(naturalH * scale);
+    const targetW = Math.max(1, Math.round(naturalW * scale));
+    const targetH = Math.max(1, Math.round(naturalH * scale));
 
     const canvas = document.createElement('canvas');
     canvas.width = targetW;
@@ -150,27 +149,27 @@ class ImageProcessor {
   }
 
   /**
-   * DETECCIÓN DE ORIENTACIÓN EN EL SENTIDO DE LECTURA HUMANA
-   * 1. Análisis de renglones horizontales vs verticales de la escritura manuscrita.
-   * 2. Regla física de perspectiva: El borde más ancho de la hoja corresponde a la base (abajo).
-   * 3. Densidad de encabezado vs cuerpo de texto.
+   * DETECCIÓN PRECISA DE ORIENTACIÓN Y SENTIDO DE LECTURA (0°, 90°, 180°, 270°)
+   * Analiza:
+   * 1. Renglones de escritura manuscrita (Horizontal vs Vertical).
+   * 2. Densidad de tinta y márgenes superior vs inferior.
+   * 3. Proyección de líneas para orientación natural de lectura.
    */
   detectReadingOrientation(srcMat) {
     if (!this.isOpenCvReady) {
-      return { suggestedRotation: 0, confidence: 0, needsReview: false, reason: 'OpenCV no listo' };
+      return { suggestedRotation: 0, confidence: 0, reason: 'OpenCV no listo' };
     }
 
     const matsToDelete = [];
     try {
       const origW = srcMat.cols;
       const origH = srcMat.rows;
-      const isLandscape = origW > origH;
 
-      // Redimensionar para análisis rápido
-      const maxDim = 400;
+      // Crear thumbnail rápido de 320px para análisis
+      const maxDim = 320;
       const scale = Math.min(1.0, maxDim / Math.max(origW, origH));
-      const thumbW = Math.round(origW * scale);
-      const thumbH = Math.round(origH * scale);
+      const thumbW = Math.max(10, Math.round(origW * scale));
+      const thumbH = Math.max(10, Math.round(origH * scale));
 
       const thumb = new cv.Mat();
       matsToDelete.push(thumb);
@@ -180,7 +179,7 @@ class ImageProcessor {
       matsToDelete.push(gray);
       cv.cvtColor(thumb, gray, cv.COLOR_RGBA2GRAY);
 
-      // 1. Análisis de líneas de escritura manuscrita (Gradientes Sobel Y vs Sobel X)
+      // Evaluar varianza de renglones en orientación 0° vs 90°
       const gradX = new cv.Mat();
       const gradY = new cv.Mat();
       matsToDelete.push(gradX, gradY);
@@ -193,103 +192,88 @@ class ImageProcessor {
       cv.convertScaleAbs(gradX, absX);
       cv.convertScaleAbs(gradY, absY);
 
-      // Calcular varianza de proyección horizontal (renglones) vs vertical
-      let rowGradSum = new Array(thumbH).fill(0);
-      let colGradSum = new Array(thumbW).fill(0);
-
+      // Varianza horizontal (renglones normales)
+      let rowSums = new Array(thumbH).fill(0);
       const dataY = absY.data;
       for (let r = 0; r < thumbH; r++) {
         let sum = 0;
-        const rowOffset = r * thumbW;
+        const offset = r * thumbW;
         for (let c = 0; c < thumbW; c++) {
-          sum += dataY[rowOffset + c];
+          sum += dataY[offset + c];
         }
-        rowGradSum[r] = sum;
+        rowSums[r] = sum;
       }
+      const meanRow = rowSums.reduce((a,b)=>a+b, 0) / thumbH;
+      const varRow = rowSums.reduce((a,b)=>a + (b - meanRow)**2, 0) / thumbH;
 
-      const meanRow = rowGradSum.reduce((a,b)=>a+b, 0) / thumbH;
-      const varRow = rowGradSum.reduce((a,b)=>a + (b - meanRow)**2, 0) / thumbH;
-
+      // Varianza vertical (renglones de costado)
+      let colSums = new Array(thumbW).fill(0);
       const dataX = absX.data;
       for (let c = 0; c < thumbW; c++) {
         let sum = 0;
         for (let r = 0; r < thumbH; r++) {
           sum += dataX[r * thumbW + c];
         }
-        colGradSum[c] = sum;
+        colSums[c] = sum;
       }
-      const meanCol = colGradSum.reduce((a,b)=>a+b, 0) / thumbW;
-      const varCol = colGradSum.reduce((a,b)=>a + (b - meanCol)**2, 0) / thumbW;
+      const meanCol = colSums.reduce((a,b)=>a+b, 0) / thumbW;
+      const varCol = colSums.reduce((a,b)=>a + (b - meanCol)**2, 0) / thumbW;
 
-      // 2. Segmentación de la hoja para evaluar perspectiva trapezoidal
-      const blurred = new cv.Mat();
-      matsToDelete.push(blurred);
-      cv.GaussianBlur(gray, blurred, new cv.Size(9, 9), 0);
-
-      const thresh = new cv.Mat();
-      matsToDelete.push(thresh);
-      cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
-      // Medir ancho/span de la hoja en el sector izquierdo (20%) y derecho (80%)
-      const leftCol = Math.round(thumbW * 0.20);
-      const rightCol = Math.round(thumbW * 0.80);
-
-      let leftSpan = 0, leftMin = thumbH, leftMax = 0;
-      let rightSpan = 0, rightMin = thumbH, rightMax = 0;
-
-      for (let r = 0; r < thumbH; r++) {
-        if (thresh.data[r * thumbW + leftCol] > 128) {
-          if (r < leftMin) leftMin = r;
-          if (r > leftMax) leftMax = r;
-        }
-        if (thresh.data[r * thumbW + rightCol] > 128) {
-          if (r < rightMin) rightMin = r;
-          if (r > rightMax) rightMax = r;
-        }
+      // Análisis de densidad superior vs inferior para detectar si está invertida (180°)
+      // En manuscritos, el margen superior/encabezado tiene mayor luminosidad (menos tinta) que el cuerpo
+      const topRows = Math.round(thumbH * 0.25);
+      const botRows = Math.round(thumbH * 0.25);
+      let topInk = 0, botInk = 0;
+      for (let r = 0; r < topRows; r++) {
+        const offset = r * thumbW;
+        for (let c = 0; c < thumbW; c++) topInk += dataY[offset + c];
       }
-      if (leftMax > leftMin) leftSpan = leftMax - leftMin;
-      if (rightMax > rightMin) rightSpan = rightMax - rightMin;
+      for (let r = thumbH - botRows; r < thumbH; r++) {
+        const offset = r * thumbW;
+        for (let c = 0; c < thumbW; c++) botInk += dataY[offset + c];
+      }
 
       let suggestedRotation = 0;
-      let reason = 'Orientación vertical correcta';
-      let confidence = 0.88;
+      let reason = 'Orientación de lectura correcta';
 
-      if (isLandscape) {
-        // La foto está apaisada. Evaluamos la regla de perspectiva:
-        // El lado con mayor span vertical es la base (parte inferior) de la hoja.
-        if (rightSpan > leftSpan * 1.08) {
-          suggestedRotation = 90;
-          reason = 'Documento apaisado: lado derecho más ancho (rotado 90° a vertical)';
+      // 1. Si la foto es apaisada (W > H) y las líneas son horizontales a lo ancho:
+      if (origW > origH) {
+        if (varRow > varCol * 1.1) {
+          // La foto es ancha y el texto corre horizontal a lo ancho
+          suggestedRotation = 0;
+          reason = 'Documento apaisado horizontal';
         } else {
-          // El lado izquierdo es la base más ancha -> Giro 270°
+          // La foto es ancha pero el texto corre vertical -> necesita 90° o 270°
           suggestedRotation = 270;
-          reason = 'Documento apaisado: lado izquierdo más ancho/base (rotado 270° a vertical)';
+          reason = 'Giro 270° a lectura vertical';
         }
       } else {
-        // La foto ya está en proporción vertical
-        // Si la varianza por columnas supera con creces a la de filas, el texto está de costado
-        if (varCol > varRow * 1.45) {
-          suggestedRotation = 270;
-          reason = 'Texto manuscrito vertical detectado (girado 270° a lectura)';
+        // La foto es vertical (H > W)
+        if (varCol > varRow * 1.25) {
+          // Los renglones están de costado (verticales en la foto vertical)
+          suggestedRotation = 90;
+          reason = 'Texto de costado (girado 90° a lectura horizontal)';
+        } else if (topInk > botInk * 1.45) {
+          // El encabezado denso quedó abajo y el pie arriba -> invertida 180°
+          suggestedRotation = 180;
+          reason = 'Documento invertido (girado 180° a lectura correcta)';
         } else {
           suggestedRotation = 0;
-          reason = 'Documento vertical listo para lectura';
+          reason = 'Orientación vertical correcta';
         }
       }
 
       return {
         suggestedRotation,
-        confidence,
-        needsReview: false,
+        confidence: 0.88,
         reason
       };
     } catch (err) {
       console.warn("Fallo al detectar orientación:", err);
       return {
-        suggestedRotation: (srcMat.cols > srcMat.rows) ? 270 : 0,
+        suggestedRotation: 0,
         confidence: 0.70,
-        needsReview: false,
-        reason: 'Giro predeterminado a vertical'
+        reason: 'Orientación original'
       };
     } finally {
       matsToDelete.forEach(m => { try { m.delete(); } catch (_) {} });
@@ -297,171 +281,9 @@ class ImageProcessor {
   }
 
   /**
-   * DETECCIÓN ROBUSTA Y CONSERVADORA DE CONTORNO
-   * - Si la hoja ya ocupa >75% del encuadre, NO RECORTA (conserva marco total 100%).
-   * - Si hay mesa visible separable, recorta con margen de seguridad (+3.5%).
+   * SIN RECORTE: Retorna las 4 esquinas del fotograma completo (100% de la imagen)
    */
-  detectDocumentCorners(srcMat, safetyMarginPercent = 0.035) {
-    const origW = srcMat.cols;
-    const origH = srcMat.rows;
-
-    if (!this.isOpenCvReady) {
-      return this.getDefaultCorners(origW, origH, 'Marco total conservado');
-    }
-
-    const matsToDelete = [];
-    try {
-      const maxDim = 600;
-      const scale = Math.min(1.0, maxDim / Math.max(origW, origH));
-      const downW = Math.round(origW * scale);
-      const downH = Math.round(origH * scale);
-
-      const resized = new cv.Mat();
-      matsToDelete.push(resized);
-      cv.resize(srcMat, resized, new cv.Size(downW, downH), 0, 0, cv.INTER_AREA);
-
-      const gray = new cv.Mat();
-      matsToDelete.push(gray);
-      cv.cvtColor(resized, gray, cv.COLOR_RGBA2GRAY);
-
-      const blurred = new cv.Mat();
-      matsToDelete.push(blurred);
-      cv.GaussianBlur(gray, blurred, new cv.Size(9, 9), 0);
-
-      // Umbralizado Otsu
-      const thresh = new cv.Mat();
-      matsToDelete.push(thresh);
-      cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
-      // Canny para encontrar aristas definidas del papel
-      const edges = new cv.Mat();
-      matsToDelete.push(edges);
-      cv.Canny(blurred, edges, 35, 110);
-      const kernelDilate = cv.Mat.ones(5, 5, cv.CV_8U);
-      matsToDelete.push(kernelDilate);
-      cv.dilate(edges, edges, kernelDilate);
-
-      const combined = new cv.Mat();
-      matsToDelete.push(combined);
-      cv.bitwise_or(thresh, edges, combined);
-
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-      matsToDelete.push(contours, hierarchy);
-      cv.findContours(combined, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      const totalFrameArea = downW * downH;
-      let largestContour = null;
-      let maxArea = 0;
-
-      for (let i = 0; i < contours.size(); i++) {
-        const c = contours.get(i);
-        const area = cv.contourArea(c);
-        if (area > maxArea) {
-          maxArea = area;
-          if (largestContour) largestContour.delete();
-          largestContour = c;
-        } else {
-          c.delete();
-        }
-      }
-
-      // REGLA CLAVE DE NO-RECORTAR INCORRECTAMENTE:
-      // Si el contorno ocupa más del 78% del fotograma, la foto ya está encuadrada sobre la hoja.
-      // O si el contorno es menor al 25% (demasiado pequeño o ruido), no cortar la foto.
-      if (!largestContour || maxArea >= (totalFrameArea * 0.78) || maxArea < (totalFrameArea * 0.25)) {
-        if (largestContour) largestContour.delete();
-        return this.getDefaultCorners(origW, origH, 'Fotograma completo conservado (sin recorte innecesario)');
-      }
-
-      // Obtener envolvente convexa (Convex Hull)
-      const hull = new cv.Mat();
-      matsToDelete.push(hull);
-      cv.convexHull(largestContour, hull, false, true);
-
-      const pts = [];
-      for (let i = 0; i < hull.rows; i++) {
-        pts.push({
-          x: hull.data32S[i * 2],
-          y: hull.data32S[i * 2 + 1]
-        });
-      }
-      largestContour.delete();
-
-      if (pts.length < 4) {
-        return this.getDefaultCorners(origW, origH, 'Fotograma completo conservado');
-      }
-
-      const orderedSmall = this.extractFourCornersFromPoints(pts);
-
-      // Si alguna esquina está muy cerca del borde (< 5% del marco), no recortar agresivamente
-      const marginBorder = downW * 0.05;
-      const isTouchingBorder = orderedSmall.some(p => 
-        p.x <= marginBorder || p.x >= downW - marginBorder ||
-        p.y <= marginBorder || p.y >= downH - marginBorder
-      );
-
-      if (isTouchingBorder && (maxArea > totalFrameArea * 0.65)) {
-        return this.getDefaultCorners(origW, origH, 'Bordes conservados (hoja pegada al encuadre)');
-      }
-
-      // Escalar a coordenadas reales
-      const fullScaleCorners = orderedSmall.map(p => ({
-        x: Math.round(p.x / scale),
-        y: Math.round(p.y / scale)
-      }));
-
-      // Aplicar margen de seguridad generoso (+3.5%)
-      const safeCorners = this.applySafetyMargin(fullScaleCorners, origW, origH, safetyMarginPercent);
-
-      return {
-        corners: safeCorners,
-        confidence: 0.90,
-        needsReview: false,
-        reason: 'Hoja delimitada con margen de seguridad'
-      };
-
-    } catch (err) {
-      console.warn("Fallo en detección de esquinas:", err);
-      return this.getDefaultCorners(origW, origH, 'Fotograma completo');
-    } finally {
-      matsToDelete.forEach(m => { try { m.delete(); } catch (_) {} });
-    }
-  }
-
-  extractFourCornersFromPoints(pts) {
-    let tl = pts[0], tr = pts[0], br = pts[0], bl = pts[0];
-    let minSum = Infinity, maxSum = -Infinity;
-    let minDiff = Infinity, maxDiff = -Infinity;
-
-    pts.forEach(p => {
-      const sum = p.x + p.y;
-      const diff = p.y - p.x;
-
-      if (sum < minSum) { minSum = sum; tl = p; }
-      if (sum > maxSum) { maxSum = sum; br = p; }
-      if (diff < minDiff) { minDiff = diff; tr = p; }
-      if (diff > maxDiff) { maxDiff = diff; bl = p; }
-    });
-
-    return [tl, tr, br, bl];
-  }
-
-  applySafetyMargin(corners, width, height, marginPercent = 0.035) {
-    const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
-    const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
-
-    return corners.map(pt => {
-      const vx = pt.x - cx;
-      const vy = pt.y - cy;
-      return {
-        x: Math.max(0, Math.min(width - 1, Math.round(cx + vx * (1 + marginPercent)))),
-        y: Math.max(0, Math.min(height - 1, Math.round(cy + vy * (1 + marginPercent))))
-      };
-    });
-  }
-
-  getDefaultCorners(width, height, reason = 'Marco total') {
+  getDefaultCorners(width, height, reason = 'Fotograma completo 100%') {
     return {
       corners: [
         { x: 0, y: 0 },
@@ -469,77 +291,28 @@ class ImageProcessor {
         { x: width - 1, y: height - 1 },
         { x: 0, y: height - 1 }
       ],
-      confidence: 0.70,
-      needsReview: false,
+      confidence: 1.0,
       reason
     };
   }
 
   /**
-   * CORRECCIÓN DE PERSPECTIVA SEGURA
+   * MEJORA DE LEGIBILIDAD: NIVELACIÓN ADITIVA Y CLAHE (SIN RAYAS, CONSERVA COLOR SEPIA)
    */
-  correctPerspective(srcMat, corners) {
-    if (!this.isOpenCvReady) throw new Error("OpenCV no está inicializado");
-
-    let [tl, tr, br, bl] = corners || [];
-    if (!tl || !tr || !br || !bl) {
-      return srcMat.clone();
-    }
-
-    const widthA = Math.hypot(br.x - bl.x, br.y - bl.y);
-    const widthB = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-    const targetW = Math.max(120, Math.round(Math.max(widthA, widthB)));
-
-    const heightA = Math.hypot(tr.x - br.x, tr.y - br.y);
-    const heightB = Math.hypot(tl.x - bl.x, tl.y - bl.y);
-    const targetH = Math.max(120, Math.round(Math.max(heightA, heightB)));
-
-    const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-      tl.x, tl.y,
-      tr.x, tr.y,
-      br.x, br.y,
-      bl.x, bl.y
-    ]);
-
-    const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-      0, 0,
-      targetW - 1, 0,
-      targetW - 1, targetH - 1,
-      0, targetH - 1
-    ]);
-
-    try {
-      const transformMat = cv.getPerspectiveTransform(srcTri, dstTri);
-      const warped = new cv.Mat();
-      cv.warpPerspective(srcMat, warped, transformMat, new cv.Size(targetW, targetH), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
-      transformMat.delete();
-      return warped;
-    } catch (e) {
-      console.warn("Fallo al aplicar warpPerspective, usando copia directa:", e);
-      return srcMat.clone();
-    } finally {
-      srcTri.delete();
-      dstTri.delete();
-    }
-  }
-
-  /**
-   * MEJORA DE LEGIBILIDAD: NIVELACIÓN ADITIVA (SIN RAYAS EN EL FONDO)
-   */
-  enhanceHistoricalDocument(warpedMat, options = {}) {
+  enhanceHistoricalDocument(srcMat, options = {}) {
     const {
       illuminationCorrection = true,
       contrastFactor = 1.3,
       sharpnessFactor = 0.20
     } = options;
 
-    if (!this.isOpenCvReady) return warpedMat.clone();
+    if (!this.isOpenCvReady) return srcMat.clone();
 
     const matsToDelete = [];
     try {
       const rgbMat = new cv.Mat();
       matsToDelete.push(rgbMat);
-      cv.cvtColor(warpedMat, rgbMat, cv.COLOR_RGBA2RGB);
+      cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
 
       const labMat = new cv.Mat();
       matsToDelete.push(labMat);
@@ -554,11 +327,11 @@ class ImageProcessor {
       const B = labPlanes.get(2);
       matsToDelete.push(L, A, B);
 
-      // Nivelación aditiva suave
+      // Nivelación aditiva suave (cero rayas en el fondo)
       if (illuminationCorrection) {
         const bgEstimate = new cv.Mat();
         matsToDelete.push(bgEstimate);
-        const kSize = Math.max(31, Math.round(Math.min(warpedMat.cols, warpedMat.rows) / 20) | 1);
+        const kSize = Math.max(31, Math.round(Math.min(srcMat.cols, srcMat.rows) / 20) | 1);
         cv.GaussianBlur(L, bgEstimate, new cv.Size(kSize, kSize), 0);
 
         const meanBg = cv.mean(bgEstimate)[0];
@@ -576,7 +349,7 @@ class ImageProcessor {
 
         const scaledDiff = new cv.Mat();
         matsToDelete.push(scaledDiff);
-        cv.multiply(diff, new cv.Mat(L.rows, L.cols, cv.CV_32F, new cv.Scalar(0.60)), scaledDiff);
+        cv.multiply(diff, new cv.Mat(L.rows, L.cols, cv.CV_32F, new cv.Scalar(0.55)), scaledDiff);
 
         const L_corr = new cv.Mat();
         matsToDelete.push(L_corr);
@@ -595,7 +368,7 @@ class ImageProcessor {
       clahe.apply(L, claheL);
       clahe.delete();
 
-      // Nitidez suave
+      // Nitidez suave de tinta
       const sharpL = new cv.Mat();
       matsToDelete.push(sharpL);
       if (sharpnessFactor > 0) {
@@ -625,7 +398,7 @@ class ImageProcessor {
       return resultMat;
     } catch (err) {
       console.warn("Fallo al mejorar manuscrito, conservando original:", err);
-      return warpedMat.clone();
+      return srcMat.clone();
     } finally {
       matsToDelete.forEach(m => { try { m.delete(); } catch (_) {} });
     }
@@ -644,8 +417,8 @@ class ImageProcessor {
   createThumbnailFromCanvas(canvas, maxDim = 320) {
     const scale = Math.min(1.0, maxDim / Math.max(canvas.width, canvas.height));
     const thumbCanvas = document.createElement('canvas');
-    thumbCanvas.width = Math.round(canvas.width * scale);
-    thumbCanvas.height = Math.round(canvas.height * scale);
+    thumbCanvas.width = Math.max(1, Math.round(canvas.width * scale));
+    thumbCanvas.height = Math.max(1, Math.round(canvas.height * scale));
     const ctx = thumbCanvas.getContext('2d');
     ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
     const dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.80);
