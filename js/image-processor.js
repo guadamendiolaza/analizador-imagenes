@@ -182,7 +182,7 @@ class ImageProcessor {
     // Umbral adaptativo: 55% del máximo (detecta papel vs fondo oscuro)
     const THRESH = Math.max(90, maxBr * 0.55);
 
-    // Función auxiliar: span promedio de pixels brillantes en un rango de filas o columnas
+    // Función auxiliar: span promedio de pixels brillantes en un rango de filas
     const rowSpan = (y0, y1) => {
       let sum = 0, n = 0;
       for (let y = y0; y < y1; y++) {
@@ -216,42 +216,41 @@ class ImageProcessor {
     const isLandscape = canvas.width > canvas.height;
 
     if (isLandscape) {
-      // Imagen apaisada: medir span vertical en franja izquierda vs derecha
+      // Para imágenes apaisadas: medir span vertical en franja izquierda vs derecha.
+      // Regla: el lado ANGOSTO va abajo. Después de rotar, el lado angosto queda en bottom.
+      // Rotar 90° CW pone el lado DERECHO de la landscape como bottom.
+      // Rotar 270° CW pone el lado IZQUIERDO como bottom.
       const leftH  = colSpan(0, Math.round(AW * 0.25));
       const rightH = colSpan(Math.round(AW * 0.75), AW);
 
-      // El lado más ALTO es la parte LEJANA de la cámara (TOP del documento)
-      // El lado más corto es la parte CERCANA (BOTTOM del documento)
-      // → el borde más corto debe ir abajo
-      // Después de rotar 90° CW: el lado derecho va abajo
-      // Después de rotar 270° CW: el lado izquierdo va abajo
-
-      if (leftH > rightH * 1.10) {
-        // Lado izquierdo es más alto → left es el TOP → right va abajo → rotar 90° CW
-        return 90;
-      } else if (rightH > leftH * 1.10) {
-        // Lado derecho es más alto → right es el TOP → left va abajo → rotar 270° CW
+      if (leftH < rightH * 0.90) {
+        // Lado izquierdo es más angosto → izquierda debe ser el bottom → rotar 270° CW
         return 270;
+      } else if (rightH < leftH * 0.90) {
+        // Lado derecho es más angosto → derecha debe ser el bottom → rotar 90° CW
+        return 90;
       }
-      // Ambiguo: default 270° para fotos de móvil
-      return 270;
+      return 270; // default landscape
     }
 
-    // Imagen vertical (portrait): medir span horizontal en franja superior vs inferior
-    const topBandEnd  = Math.round(AH * 0.25);
-    const botBandStart = Math.round(AH * 0.75);
+    // ─── Imagen vertical (portrait) ───────────────────────────────────────────
+    // REGLA FÍSICA CONFIRMADA con las fotos reales:
+    //   • El lado ANCHO de la hoja → arriba (encuadernación, bordes solapados)
+    //   • El lado ANGOSTO → abajo  (borde libre de la hoja)
+    //
+    // Estado CORRECTO:   topW > botW  (ancho arriba, angosto abajo) → NO rotar
+    // Estado INVERTIDO:  botW > topW  (ancho abajo, angosto arriba) → rotar 180°
 
-    const topW = rowSpan(0, topBandEnd);
-    const botW = rowSpan(botBandStart, AH);
+    const topW = rowSpan(0, Math.round(AH * 0.25));
+    const botW = rowSpan(Math.round(AH * 0.75), AH);
 
-    // Si el borde SUPERIOR es claramente MÁS ANCHO que el inferior:
-    // → la hoja está invertida → necesita 180°
-    // Umbral conservador del 10% para evitar falsos positivos
-    if (topW > botW * 1.10) {
+    // Si la parte INFERIOR es notablemente MÁS ANCHA que la superior:
+    // la hoja está patas para arriba → girar 180°
+    if (botW > topW * 1.10) {
       return 180;
     }
 
-    return 0; // correcto como está
+    return 0; // orientación correcta
   }
 
   // ========= MEJORA OPENCVO: CLAHE + NIVELACIÓN SIN FUGA DE MEMORIA =========
