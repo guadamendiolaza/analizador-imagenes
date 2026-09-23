@@ -1,9 +1,10 @@
 /**
  * ==========================================================================
- * APLICACIÓN PRINCIPAL: ANALIZADOR Y MEJORADOR DE MANUSCRITOS HISTÓRICOS v3.0
- * - Gestión de lotes con giro automático a vertical (orientación correcta).
+ * APLICACIÓN PRINCIPAL: ANALIZADOR Y MEJORADOR DE MANUSCRITOS HISTÓRICOS v3.8
+ * - Gestión de lotes con giro automático en el sentido de lectura.
  * - Marcado ágil de fotos "En Revisión".
  * - Botones dedicados para girar 180° o 90° ÚNICAMENTE las fotos en revisión.
+ * - Recorte no destructivo y preservación total del documento.
  * - Inclusión de PDF completo consolidado en orden original dentro del ZIP
  *   y botón de descarga directa de PDF.
  * ==========================================================================
@@ -107,8 +108,8 @@ class ManuscriptApp {
     const checkOpenCv = () => {
       if (window.cv && window.cv.Mat) {
         window.documentImageProcessor.setOpenCvReady();
-        this.statusDotEl.className = 'status-dot ready';
-        this.statusTextEl.textContent = 'Motor OpenCV listo';
+        if (this.statusDotEl) this.statusDotEl.className = 'status-dot ready';
+        if (this.statusTextEl) this.statusTextEl.textContent = 'Motor OpenCV listo (100% Local)';
         this.updateButtonsState();
       } else {
         setTimeout(checkOpenCv, 250);
@@ -118,10 +119,10 @@ class ManuscriptApp {
   }
 
   initEventListeners() {
-    this.folderInput.addEventListener('change', (e) => this.handleFilesSelected(e.target.files));
-    this.filesInput.addEventListener('change', (e) => this.handleFilesSelected(e.target.files));
+    if (this.folderInput) this.folderInput.addEventListener('change', (e) => this.handleFilesSelected(e.target.files));
+    if (this.filesInput) this.filesInput.addEventListener('change', (e) => this.handleFilesSelected(e.target.files));
 
-    this.btnProcessBatch.addEventListener('click', () => this.processEntireBatch());
+    if (this.btnProcessBatch) this.btnProcessBatch.addEventListener('click', () => this.processEntireBatch());
 
     // Botones de giro para fotos en revisión
     if (this.btnRotateReview180) {
@@ -135,14 +136,14 @@ class ManuscriptApp {
       this.btnRotateBatch270.addEventListener('click', () => this.rotateAllBatch(270));
     }
 
-    this.btnAcceptAuto.addEventListener('click', () => this.acceptAllAutomatic());
-    this.btnDownloadZip.addEventListener('click', () => this.downloadZipPackage());
+    if (this.btnAcceptAuto) this.btnAcceptAuto.addEventListener('click', () => this.acceptAllAutomatic());
+    if (this.btnDownloadZip) this.btnDownloadZip.addEventListener('click', () => this.downloadZipPackage());
 
     if (this.btnDownloadPdf) {
       this.btnDownloadPdf.addEventListener('click', () => this.downloadSinglePdf());
     }
 
-    this.btnClearAll.addEventListener('click', () => this.clearAll());
+    if (this.btnClearAll) this.btnClearAll.addEventListener('click', () => this.clearAll());
 
     this.filterTabs.forEach(tab => {
       tab.addEventListener('click', () => {
@@ -153,52 +154,73 @@ class ManuscriptApp {
       });
     });
 
-    this.modalTabSplit.addEventListener('click', () => this.switchModalTab('split'));
-    this.modalTabCorners.addEventListener('click', () => this.switchModalTab('corners'));
+    if (this.modalTabSplit) this.modalTabSplit.addEventListener('click', () => this.switchModalTab('split'));
+    if (this.modalTabCorners) this.modalTabCorners.addEventListener('click', () => this.switchModalTab('corners'));
 
-    this.modalCloseBtn.addEventListener('click', () => this.closeInspector());
-    this.btnModalCancel.addEventListener('click', () => this.closeInspector());
-    this.btnModalApply.addEventListener('click', () => this.applyModalChanges());
+    if (this.modalCloseBtn) this.modalCloseBtn.addEventListener('click', () => this.closeInspector());
+    if (this.btnModalCancel) this.btnModalCancel.addEventListener('click', () => this.closeInspector());
+    if (this.btnModalApply) this.btnModalApply.addEventListener('click', () => this.applyModalChanges());
 
-    this.btnModalRotate.addEventListener('click', async () => {
-      if (!this.selectedItem) return;
-      this.selectedItem.rotationDeg = (this.selectedItem.rotationDeg + 90) % 360;
-      this.selectedItem.corners = null;
-      await this.reprocessSingleItem(this.selectedItem);
-      this.openInspector(this.selectedItem);
-    });
+    if (this.btnModalRotate) {
+      this.btnModalRotate.addEventListener('click', async () => {
+        if (!this.selectedItem) return;
+        this.selectedItem.rotationDeg = (this.selectedItem.rotationDeg + 90) % 360;
+        this.selectedItem.isManuallyRotated = true;
+        this.selectedItem.corners = null;
+        await this.reprocessSingleItem(this.selectedItem);
+        this.openInspector(this.selectedItem);
+      });
+    }
 
-    this.sliderContrast.addEventListener('input', (e) => {
-      this.valContrast.textContent = parseFloat(e.target.value).toFixed(1);
-    });
-    this.sliderSharpness.addEventListener('input', (e) => {
-      this.valSharpness.textContent = parseFloat(e.target.value).toFixed(2);
-    });
+    if (this.sliderContrast && this.valContrast) {
+      this.sliderContrast.addEventListener('input', (e) => {
+        this.valContrast.textContent = parseFloat(e.target.value).toFixed(1);
+      });
+    }
+    if (this.sliderSharpness && this.valSharpness) {
+      this.sliderSharpness.addEventListener('input', (e) => {
+        this.valSharpness.textContent = parseFloat(e.target.value).toFixed(2);
+      });
+    }
 
-    this.btnCornerFull.addEventListener('click', () => {
-      if (this.cornerEditor) this.cornerEditor.resetToFullFrame();
-    });
-    this.btnCornerAuto.addEventListener('click', () => {
-      if (this.cornerEditor) this.cornerEditor.resetToAuto();
-    });
-    this.btnMarginPlus.addEventListener('click', () => {
-      if (this.cornerEditor) this.cornerEditor.adjustMargin(0.02);
-    });
-    this.btnMarginMinus.addEventListener('click', () => {
-      if (this.cornerEditor) this.cornerEditor.adjustMargin(-0.02);
-    });
+    if (this.btnCornerFull) {
+      this.btnCornerFull.addEventListener('click', () => {
+        if (this.cornerEditor) this.cornerEditor.resetToFullFrame();
+      });
+    }
+    if (this.btnCornerAuto) {
+      this.btnCornerAuto.addEventListener('click', () => {
+        if (this.cornerEditor) this.cornerEditor.resetToAuto();
+      });
+    }
+    if (this.btnMarginPlus) {
+      this.btnMarginPlus.addEventListener('click', () => {
+        if (this.cornerEditor) this.cornerEditor.adjustMargin(0.02);
+      });
+    }
+    if (this.btnMarginMinus) {
+      this.btnMarginMinus.addEventListener('click', () => {
+        if (this.cornerEditor) this.cornerEditor.adjustMargin(-0.02);
+      });
+    }
 
     this.initSplitSlider();
 
-    this.btnOpenGuide.addEventListener('click', () => {
-      this.guideModal.classList.add('active');
-    });
-    this.guideCloseBtn.addEventListener('click', () => {
-      this.guideModal.classList.remove('active');
-    });
-    this.btnGuideGotIt.addEventListener('click', () => {
-      this.guideModal.classList.remove('active');
-    });
+    if (this.btnOpenGuide) {
+      this.btnOpenGuide.addEventListener('click', () => {
+        if (this.guideModal) this.guideModal.classList.add('active');
+      });
+    }
+    if (this.guideCloseBtn) {
+      this.guideCloseBtn.addEventListener('click', () => {
+        if (this.guideModal) this.guideModal.classList.remove('active');
+      });
+    }
+    if (this.btnGuideGotIt) {
+      this.btnGuideGotIt.addEventListener('click', () => {
+        if (this.guideModal) this.guideModal.classList.remove('active');
+      });
+    }
   }
 
   initDropzone() {
@@ -206,7 +228,7 @@ class ManuscriptApp {
       window.addEventListener(eventName, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.emptyState.classList.add('dragover');
+        if (this.emptyState) this.emptyState.classList.add('dragover');
       });
     });
 
@@ -214,7 +236,7 @@ class ManuscriptApp {
       window.addEventListener(eventName, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.emptyState.classList.remove('dragover');
+        if (this.emptyState) this.emptyState.classList.remove('dragover');
       });
     });
 
@@ -226,6 +248,8 @@ class ManuscriptApp {
   }
 
   initSplitSlider() {
+    if (!this.compSliderHandle || !this.compImgBefore) return;
+
     const handleStart = (e) => {
       this.isDraggingSlider = true;
       e.preventDefault();
@@ -254,8 +278,8 @@ class ManuscriptApp {
 
   updateSplitSlider(percent) {
     this.splitSliderPosition = percent;
-    this.compAfterOverlay.style.width = `${percent}%`;
-    this.compSliderHandle.style.left = `${percent}%`;
+    if (this.compAfterOverlay) this.compAfterOverlay.style.width = `${percent}%`;
+    if (this.compSliderHandle) this.compSliderHandle.style.left = `${percent}%`;
   }
 
   async handleFilesSelected(fileList) {
@@ -284,6 +308,7 @@ class ManuscriptApp {
         size: file.size,
         originalCanvas: null,
         enhancedCanvas: null,
+        thumbUrl: null,
         corners: null,
         autoCorners: null,
         rotationDeg: 0,
@@ -293,6 +318,7 @@ class ManuscriptApp {
         reviewReason: 'Listo para procesar',
         confidence: 0,
         isManuallyAccepted: false,
+        isManuallyRotated: false,
         contrastFactor: 1.3,
         sharpnessFactor: 0.20,
         illuminationCorrection: true
@@ -335,7 +361,7 @@ class ManuscriptApp {
         console.error(`Error al procesar ${item.name}:`, err);
         item.status = 'error';
         item.needsReview = true;
-        item.reviewReason = 'Error en el procesamiento';
+        item.reviewReason = 'Error en el procesamiento: ' + (err.message || 'desconocido');
       }
 
       processedCount++;
@@ -345,7 +371,7 @@ class ManuscriptApp {
       this.updateStatsCounters();
       this.renderItemCard(item);
 
-      await new Promise(r => setTimeout(r, 25));
+      await new Promise(r => setTimeout(r, 15));
     }
 
     this.isProcessing = false;
@@ -359,7 +385,7 @@ class ManuscriptApp {
     const processor = window.documentImageProcessor;
 
     // Cargar con rotación previa si ya fue establecida
-    let loaded = await processor.loadImageFromFile(item.file, item.rotationDeg);
+    let loaded = await processor.loadImageFromFile(item.file, item.rotationDeg, 2800);
     item.originalCanvas = loaded.element;
     item.exifOrientation = loaded.exifOrientation;
 
@@ -370,7 +396,7 @@ class ManuscriptApp {
     try {
       srcMat = processor.elementToMat(item.originalCanvas);
 
-      // Si la foto es apaisada y aún no fue rotada manualmente por el usuario:
+      // Si la foto aún no fue rotada manualmente por el usuario:
       if (item.rotationDeg === 0 && !item.isManuallyRotated) {
         const orientationResult = processor.detectReadingOrientation(srcMat);
 
@@ -382,15 +408,15 @@ class ManuscriptApp {
           srcMat.delete();
           srcMat = null;
 
-          loaded = await processor.loadImageFromFile(item.file, item.rotationDeg);
+          loaded = await processor.loadImageFromFile(item.file, item.rotationDeg, 2800);
           item.originalCanvas = loaded.element;
           srcMat = processor.elementToMat(item.originalCanvas);
         }
       }
 
-      // Detección de contornos y cálculo de las 4 esquinas
+      // Detección de contornos y cálculo de las 4 esquinas si no estaban definidas
       if (!item.corners) {
-        const docResult = processor.detectDocumentCorners(srcMat, 0.025);
+        const docResult = processor.detectDocumentCorners(srcMat, 0.035);
         item.corners = docResult.corners;
         item.autoCorners = JSON.parse(JSON.stringify(docResult.corners));
         item.confidence = docResult.confidence;
@@ -411,6 +437,7 @@ class ManuscriptApp {
       });
 
       item.enhancedCanvas = processor.matToCanvas(enhancedMat);
+      item.thumbUrl = processor.createThumbnailFromCanvas(item.enhancedCanvas, 360);
 
       if (item.needsReview && !item.isManuallyAccepted) {
         item.status = 'review';
@@ -468,8 +495,9 @@ class ManuscriptApp {
     try {
       await this.processSingleItem(item);
     } catch (e) {
-      console.error(e);
+      console.error("Error al reprocesar imagen individual:", e);
       item.status = 'error';
+      item.reviewReason = 'Error: ' + e.message;
     }
     this.updateStatsCounters();
     this.renderItemCard(item);
@@ -477,39 +505,48 @@ class ManuscriptApp {
 
   openInspector(item) {
     this.selectedItem = item;
-    this.modalTitleEl.textContent = item.name;
+    if (this.modalTitleEl) this.modalTitleEl.textContent = item.name;
 
-    this.compImgBefore.src = item.originalCanvas.toDataURL('image/jpeg', 0.9);
-    this.compImgAfter.src = item.enhancedCanvas.toDataURL('image/jpeg', 0.9);
+    const beforeSrc = item.originalCanvas ? item.originalCanvas.toDataURL('image/jpeg', 0.88) : '';
+    const afterSrc = item.enhancedCanvas ? item.enhancedCanvas.toDataURL('image/jpeg', 0.88) : beforeSrc;
+
+    if (this.compImgBefore) this.compImgBefore.src = beforeSrc;
+    if (this.compImgAfter) this.compImgAfter.src = afterSrc;
     this.updateSplitSlider(50);
 
-    this.sliderContrast.value = item.contrastFactor;
-    this.valContrast.textContent = item.contrastFactor.toFixed(1);
-    this.sliderSharpness.value = item.sharpnessFactor;
-    this.valSharpness.textContent = item.sharpnessFactor.toFixed(2);
-    this.chkIllumination.checked = item.illuminationCorrection;
+    if (this.sliderContrast) {
+      this.sliderContrast.value = item.contrastFactor;
+      if (this.valContrast) this.valContrast.textContent = item.contrastFactor.toFixed(1);
+    }
+    if (this.sliderSharpness) {
+      this.sliderSharpness.value = item.sharpnessFactor;
+      if (this.valSharpness) this.valSharpness.textContent = item.sharpnessFactor.toFixed(2);
+    }
+    if (this.chkIllumination) this.chkIllumination.checked = item.illuminationCorrection;
 
-    if (!this.cornerEditor) {
+    if (!this.cornerEditor && this.cornerCanvas) {
       this.cornerEditor = new CornerEditor(this.cornerCanvas, this.loupeMagnifier);
     }
-    this.cornerEditor.loadImage(item.originalCanvas, item.corners, item.autoCorners);
+    if (this.cornerEditor && item.originalCanvas) {
+      this.cornerEditor.loadImage(item.originalCanvas, item.corners, item.autoCorners);
+    }
 
     this.switchModalTab(this.activeModalTab);
-    this.inspectorModal.classList.add('active');
+    if (this.inspectorModal) this.inspectorModal.classList.add('active');
   }
 
   switchModalTab(tabKey) {
     this.activeModalTab = tabKey;
     if (tabKey === 'split') {
-      this.modalTabSplit.classList.add('active');
-      this.modalTabCorners.classList.remove('active');
-      this.viewSplitArea.style.display = 'flex';
-      this.viewCornersArea.style.display = 'none';
+      if (this.modalTabSplit) this.modalTabSplit.classList.add('active');
+      if (this.modalTabCorners) this.modalTabCorners.classList.remove('active');
+      if (this.viewSplitArea) this.viewSplitArea.style.display = 'flex';
+      if (this.viewCornersArea) this.viewCornersArea.style.display = 'none';
     } else {
-      this.modalTabCorners.classList.add('active');
-      this.modalTabSplit.classList.remove('active');
-      this.viewSplitArea.style.display = 'none';
-      this.viewCornersArea.style.display = 'flex';
+      if (this.modalTabCorners) this.modalTabCorners.classList.add('active');
+      if (this.modalTabSplit) this.modalTabSplit.classList.remove('active');
+      if (this.viewSplitArea) this.viewSplitArea.style.display = 'none';
+      if (this.viewCornersArea) this.viewCornersArea.style.display = 'flex';
       if (this.cornerEditor) {
         setTimeout(() => {
           this.cornerEditor.resizeCanvas();
@@ -520,7 +557,7 @@ class ManuscriptApp {
   }
 
   closeInspector() {
-    this.inspectorModal.classList.remove('active');
+    if (this.inspectorModal) this.inspectorModal.classList.remove('active');
     if (this.cornerEditor) this.cornerEditor.hideLoupe();
     this.selectedItem = null;
   }
@@ -533,9 +570,9 @@ class ManuscriptApp {
       item.corners = this.cornerEditor.getCorners();
     }
 
-    item.contrastFactor = parseFloat(this.sliderContrast.value);
-    item.sharpnessFactor = parseFloat(this.sliderSharpness.value);
-    item.illuminationCorrection = this.chkIllumination.checked;
+    if (this.sliderContrast) item.contrastFactor = parseFloat(this.sliderContrast.value);
+    if (this.sliderSharpness) item.sharpnessFactor = parseFloat(this.sliderSharpness.value);
+    if (this.chkIllumination) item.illuminationCorrection = this.chkIllumination.checked;
 
     item.isManuallyAccepted = true;
     item.needsReview = false;
@@ -593,8 +630,9 @@ class ManuscriptApp {
         pdf.addPage([imgW, imgH], isLandscape ? 'landscape' : 'portrait');
       }
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      const imgData = canvas.toDataURL('image/jpeg', 0.90);
       pdf.addImage(imgData, 'JPEG', 0, 0, imgW, imgH, undefined, 'FAST');
+      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
     }
 
     return pdf ? pdf.output('blob') : null;
@@ -671,7 +709,9 @@ class ManuscriptApp {
       const outputName = `${baseName}_mejorada.jpg`;
 
       const canvas = item.enhancedCanvas || item.originalCanvas;
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.93);
+      if (!canvas) continue;
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
       const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
       folder.file(outputName, base64Data, { base64: true });
@@ -770,9 +810,7 @@ class ManuscriptApp {
       badgeText = 'Procesando...';
     }
 
-    const displayCanvas = item.enhancedCanvas || item.originalCanvas;
-    const thumbUrl = displayCanvas ? displayCanvas.toDataURL('image/jpeg', 0.8) : '';
-
+    const thumbUrl = item.thumbUrl || (item.enhancedCanvas || item.originalCanvas ? (item.enhancedCanvas || item.originalCanvas).toDataURL('image/jpeg', 0.8) : '');
     const isReview = (item.status === 'review');
 
     card.innerHTML = `
@@ -878,15 +916,14 @@ class ManuscriptApp {
     const reviewCount = this.items.filter(i => i.status === 'review').length;
     const errCount = this.items.filter(i => i.status === 'error').length;
 
-    this.statOkEl.textContent = okCount;
-    this.statWarnEl.textContent = reviewCount;
-    this.statErrEl.textContent = errCount;
+    if (this.statOkEl) this.statOkEl.textContent = okCount;
+    if (this.statWarnEl) this.statWarnEl.textContent = reviewCount;
+    if (this.statErrEl) this.statErrEl.textContent = errCount;
 
-    this.countAllEl.textContent = total;
-    this.countReviewEl.textContent = reviewCount;
-    this.countOkEl.textContent = okCount;
+    if (this.countAllEl) this.countAllEl.textContent = total;
+    if (this.countReviewEl) this.countReviewEl.textContent = reviewCount;
+    if (this.countOkEl) this.countOkEl.textContent = okCount;
 
-    // Actualizar disponibilidad del botón de girar fotos en revisión
     if (this.btnRotateReview180) {
       this.btnRotateReview180.disabled = (reviewCount === 0 || this.isProcessing);
       this.btnRotateReview180.title = reviewCount > 0 
@@ -900,8 +937,8 @@ class ManuscriptApp {
 
   updateUI() {
     const hasItems = this.items.length > 0;
-    this.emptyState.style.display = hasItems ? 'none' : 'flex';
-    this.documentsGrid.style.display = hasItems ? 'grid' : 'none';
+    if (this.emptyState) this.emptyState.style.display = hasItems ? 'none' : 'flex';
+    if (this.documentsGrid) this.documentsGrid.style.display = hasItems ? 'grid' : 'none';
 
     this.updateStatsCounters();
     this.updateButtonsState();
@@ -915,15 +952,15 @@ class ManuscriptApp {
     const cvReady = window.documentImageProcessor.isOpenCvReady;
     const reviewCount = this.items.filter(i => i.status === 'review').length;
 
-    this.btnProcessBatch.disabled = !hasItems || !cvReady || this.isProcessing;
+    if (this.btnProcessBatch) this.btnProcessBatch.disabled = !hasItems || !cvReady || this.isProcessing;
     if (this.btnRotateBatch270) this.btnRotateBatch270.disabled = !hasItems || this.isProcessing;
     if (this.btnRotateReview180) this.btnRotateReview180.disabled = (reviewCount === 0 || this.isProcessing);
     if (this.btnRotateReview90) this.btnRotateReview90.disabled = (reviewCount === 0 || this.isProcessing);
 
-    this.btnAcceptAuto.disabled = !hasItems || this.isProcessing;
-    this.btnDownloadZip.disabled = !hasItems || this.isProcessing;
+    if (this.btnAcceptAuto) this.btnAcceptAuto.disabled = !hasItems || this.isProcessing;
+    if (this.btnDownloadZip) this.btnDownloadZip.disabled = !hasItems || this.isProcessing;
     if (this.btnDownloadPdf) this.btnDownloadPdf.disabled = !hasItems || this.isProcessing;
-    this.btnClearAll.disabled = !hasItems || this.isProcessing;
+    if (this.btnClearAll) this.btnClearAll.disabled = !hasItems || this.isProcessing;
   }
 
   clearAll() {
@@ -931,12 +968,13 @@ class ManuscriptApp {
       return;
     }
     this.items = [];
-    this.progressCard.style.display = 'none';
+    if (this.progressCard) this.progressCard.style.display = 'none';
     this.updateUI();
     this.showToast('Lista de imágenes vaciada.', 'info');
   }
 
   showToast(message, type = 'info') {
+    if (!this.toastContainer) return;
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     const icon = type === 'success' ? '✓' : (type === 'warning' ? '⚠️' : (type === 'danger' ? '✕' : 'ℹ️'));

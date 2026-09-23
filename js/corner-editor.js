@@ -11,34 +11,35 @@ class CornerEditor {
     this.ctx = canvasElement.getContext('2d');
     this.loupe = loupeElement;
 
-    this.imageSource = null; // HTMLImageElement o Canvas
+    this.imageSource = null;
     this.imageWidth = 0;
     this.imageHeight = 0;
+    this.cachedDataUrl = null;
 
     // 4 esquinas en coordenadas reales de la imagen [TL, TR, BR, BL]
     this.corners = [];
-    this.autoCorners = []; // Copia para restablecer
+    this.autoCorners = [];
     this.activeCornerIndex = -1;
     this.hoverCornerIndex = -1;
 
-    // Parámetros de renderizado y escala
     this.scale = 1.0;
-    this.offsetX = 0;
-    this.offsetY = 0;
-    this.handleRadius = 12;
-
+    this.handleRadius = 13;
     this.onChangeCallback = null;
 
     this.initEvents();
   }
 
-  /**
-   * Carga una imagen y sus 4 esquinas iniciales
-   */
   loadImage(imageSource, initialCorners = null, autoCorners = null) {
     this.imageSource = imageSource;
-    this.imageWidth = imageSource.width;
-    this.imageHeight = imageSource.height;
+    this.imageWidth = imageSource.naturalWidth || imageSource.width || 800;
+    this.imageHeight = imageSource.naturalHeight || imageSource.height || 600;
+
+    // Cachear el dataURL una sola vez al cargar la imagen para evitar spam en mousemove
+    try {
+      this.cachedDataUrl = imageSource.toDataURL ? imageSource.toDataURL('image/jpeg', 0.85) : imageSource.src;
+    } catch (_) {
+      this.cachedDataUrl = null;
+    }
 
     if (initialCorners && initialCorners.length === 4) {
       this.corners = JSON.parse(JSON.stringify(initialCorners));
@@ -109,11 +110,8 @@ class CornerEditor {
     if (this.onChangeCallback) this.onChangeCallback(this.getCorners());
   }
 
-  /**
-   * Ajusta el tamaño del canvas al contenedor manteniendo la relación de aspecto
-   */
   resizeCanvas() {
-    if (!this.imageSource) return;
+    if (!this.imageSource || !this.canvas.parentElement) return;
 
     const parent = this.canvas.parentElement;
     const maxWidth = parent.clientWidth || 800;
@@ -126,9 +124,6 @@ class CornerEditor {
     this.canvas.height = Math.round(this.imageHeight * ratio);
   }
 
-  /**
-   * Conversión entre coordenadas de pantalla y coordenadas reales de imagen
-   */
   imageToScreen(pt) {
     return {
       x: pt.x * this.scale,
@@ -143,9 +138,6 @@ class CornerEditor {
     };
   }
 
-  /**
-   * Renderizado completo: imagen, sombreado de descarte, polígono activo y tiradores
-   */
   draw() {
     if (!this.imageSource || !this.ctx) return;
 
@@ -154,20 +146,18 @@ class CornerEditor {
     const ctx = this.ctx;
 
     ctx.clearRect(0, 0, w, h);
-
-    // 1. Dibujar imagen de fondo escalada
     ctx.drawImage(this.imageSource, 0, 0, w, h);
 
     if (this.corners.length !== 4) return;
 
     const screenPts = this.corners.map(p => this.imageToScreen(p));
 
-    // 2. Máscara de oscurecimiento exterior (para destacar la hoja recortada)
+    // Máscara oscura exterior
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
     ctx.fillRect(0, 0, w, h);
 
-    // Recortar polígono interior para dejar la hoja visible sin oscurecer
+    // Despejar área de la hoja
     ctx.globalCompositeOperation = 'destination-out';
     ctx.beginPath();
     ctx.moveTo(screenPts[0].x, screenPts[0].y);
@@ -178,12 +168,10 @@ class CornerEditor {
     ctx.fill();
     ctx.restore();
 
-    // 3. Dibujar líneas conectoras del documento
+    // Líneas conectoras doradas
     ctx.save();
-    ctx.strokeStyle = '#d4af37'; // Dorado antiguo
+    ctx.strokeStyle = '#d4af37';
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = 'rgba(212, 175, 55, 0.6)';
-    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(screenPts[0].x, screenPts[0].y);
     ctx.lineTo(screenPts[1].x, screenPts[1].y);
@@ -193,7 +181,7 @@ class CornerEditor {
     ctx.stroke();
     ctx.restore();
 
-    // 4. Dibujar tiradores de las esquinas (Handles)
+    // Tiradores de las 4 esquinas
     const labels = ['TL', 'TR', 'BR', 'BL'];
     screenPts.forEach((pt, idx) => {
       const isHover = (idx === this.hoverCornerIndex);
@@ -204,42 +192,29 @@ class CornerEditor {
       const r = isHover || isActive ? this.handleRadius + 3 : this.handleRadius;
       ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
 
-      // Relleno y borde
-      ctx.fillStyle = isActive ? '#3b82f6' : (isHover ? '#f59e0b' : '#1e293b');
+      ctx.fillStyle = isActive ? '#3b82f6' : (isHover ? '#f59e0b' : '#d4af37');
       ctx.fill();
       ctx.lineWidth = 2.5;
       ctx.strokeStyle = '#ffffff';
       ctx.stroke();
 
-      // Punto central
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-
-      // Etiqueta de esquina
-      ctx.font = 'bold 10px monospace';
+      ctx.font = 'bold 10px sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const tagOffset = idx === 0 || idx === 3 ? -18 : 18;
-      ctx.fillText(labels[idx], pt.x + tagOffset, pt.y);
-
+      const tagOffset = (idx === 0 || idx === 1) ? -18 : 18;
+      ctx.fillText(labels[idx], pt.x, pt.y + tagOffset);
       ctx.restore();
     });
   }
 
-  /**
-   * Actualiza y posiciona la lupa de aumento en tiempo real
-   */
   updateLoupe(screenX, screenY, imagePt) {
-    if (!this.loupe || !this.imageSource) return;
+    if (!this.loupe || !this.imageSource || !this.cachedDataUrl) return;
 
     this.loupe.style.display = 'block';
 
-    // Posicionar lupa cerca del cursor evitando salirse de pantalla
     const loupeRadius = 65;
-    const parentRect = this.canvas.getBoundingClientRect();
+    const parentRect = this.canvas.parentElement.getBoundingClientRect();
     let loupeLeft = screenX + 25;
     let loupeTop = screenY - 140;
 
@@ -249,12 +224,11 @@ class CornerEditor {
     this.loupe.style.left = `${loupeLeft}px`;
     this.loupe.style.top = `${loupeTop}px`;
 
-    // Renderizar imagen magnificada en la lupa
-    const zoomLevel = 2.8;
+    const zoomLevel = 2.5;
     const bgX = -(imagePt.x * this.scale * zoomLevel) + loupeRadius;
     const bgY = -(imagePt.y * this.scale * zoomLevel) + loupeRadius;
 
-    this.loupe.style.backgroundImage = `url(${this.canvas.toDataURL ? this.imageSource.toDataURL('image/jpeg', 0.85) : ''})`;
+    this.loupe.style.backgroundImage = `url(${this.cachedDataUrl})`;
     this.loupe.style.backgroundSize = `${this.canvas.width * zoomLevel}px ${this.canvas.height * zoomLevel}px`;
     this.loupe.style.backgroundPosition = `${bgX}px ${bgY}px`;
   }
@@ -263,9 +237,6 @@ class CornerEditor {
     if (this.loupe) this.loupe.style.display = 'none';
   }
 
-  /**
-   * Inicialización de eventos de mouse y táctiles
-   */
   initEvents() {
     const getPos = (e) => {
       const rect = this.canvas.getBoundingClientRect();
@@ -281,12 +252,11 @@ class CornerEditor {
       for (let i = 0; i < this.corners.length; i++) {
         const screenPt = this.imageToScreen(this.corners[i]);
         const dist = Math.hypot(screenPt.x - pos.x, screenPt.y - pos.y);
-        if (dist <= this.handleRadius + 10) return i;
+        if (dist <= this.handleRadius + 12) return i;
       }
       return -1;
     };
 
-    // MOUSE DOWN / TOUCH START
     const onStart = (e) => {
       const pos = getPos(e);
       const idx = findNearbyCorner(pos);
@@ -299,12 +269,10 @@ class CornerEditor {
       }
     };
 
-    // MOUSE MOVE / TOUCH MOVE
     const onMove = (e) => {
       const pos = getPos(e);
 
       if (this.activeCornerIndex !== -1) {
-        // Arrastrando la esquina activa
         e.preventDefault();
         const imgPt = this.screenToImage(pos);
         this.corners[this.activeCornerIndex] = imgPt;
@@ -312,17 +280,15 @@ class CornerEditor {
         this.draw();
         if (this.onChangeCallback) this.onChangeCallback(this.getCorners());
       } else {
-        // Hovering
         const idx = findNearbyCorner(pos);
         if (idx !== this.hoverCornerIndex) {
           this.hoverCornerIndex = idx;
-          this.canvas.style.cursor = idx !== -1 ? 'pointer' : 'crosshair';
+          this.canvas.style.cursor = idx !== -1 ? 'pointer' : 'default';
           this.draw();
         }
       }
     };
 
-    // MOUSE UP / TOUCH END
     const onEnd = () => {
       if (this.activeCornerIndex !== -1) {
         this.activeCornerIndex = -1;
@@ -348,5 +314,4 @@ class CornerEditor {
   }
 }
 
-// Instancia global disponible
 window.CornerEditor = CornerEditor;
